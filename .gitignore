@@ -1,0 +1,6 @@
+**/.env
+supabase/functions/.env
+
+.vscode/
+
+test.txt
