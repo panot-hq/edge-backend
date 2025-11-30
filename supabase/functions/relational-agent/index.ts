@@ -20,7 +20,7 @@ const handleRequest = traceable(
       if (!transcript) {
         return new Response("Please provide a 'transcript'", { status: 400 });
       }
-      if (!mode) {
+      if (!mode || !["CONVERSATIONAL", "ACTIONABLE"].includes(mode)) {
         return new Response("Please provide a 'mode'", { status: 400 });
       }
       if (!user_id) {
@@ -38,6 +38,8 @@ const handleRequest = traceable(
           contextParts.join(", ")
         }]\n\n${transcript}`;
       }
+
+      contextMessage = `[MODE: ${mode}]\n\n${contextMessage}`;
 
       const response = await traceable(
         async () => {
@@ -59,6 +61,19 @@ const handleRequest = traceable(
 
       const lastMessage = response.messages[response.messages.length - 1];
 
+      if (mode === "ACTIONABLE") {
+        const content = lastMessage.content as string;
+        if (content.includes("OK") || content.includes("ERROR:")) {
+          return new Response(
+            JSON.stringify({ status: content }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({ status: "OK" }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
       return new Response(
         JSON.stringify({ answer: lastMessage.content }),
         { headers: { "Content-Type": "application/json" } },

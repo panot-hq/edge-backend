@@ -15,7 +15,7 @@ const llm = new ChatOpenAI({
   temperature: 0.3,
 });
 
-const regenerateContactDetails = traceable(
+const regenerate_contact_details = traceable(
   async (
     contact_id: string,
     _user_id: string,
@@ -104,6 +104,49 @@ Resumen:`;
   },
 );
 
+export const create_contact = tool(
+  async (
+    { user_id, first_name, last_name }: {
+      user_id: string;
+      first_name: string;
+      last_name: string;
+    },
+  ) => {
+    try {
+      const { data, error } = await supabase.from("contacts").insert({
+        owner_id: user_id,
+        first_name,
+        last_name,
+      }).select("id").single();
+
+      if (error) {
+        console.error("[create_contact] Error:", error.message);
+        throw new Error(error.message);
+      }
+      return JSON.stringify(data);
+    } catch (error) {
+      console.error("[create_contact] Exception:", error);
+      throw new Error((error as Error).message);
+    }
+  },
+  {
+    name: "create_contact",
+    description:
+      "Crea un nuevo contacto con el user_id proporcionado. Retorna el nuevo contact_id (UUID).",
+    schema: z.object({
+      user_id: z.string().describe(
+        'El UUID del usuario propietario (formato: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")',
+      ),
+      first_name: z.string().describe(
+        'El NOMBRE del contacto (texto legible como "Mencía", "María"). NO es un UUID.',
+      ),
+      last_name: z.string().describe(
+        'El APELLIDO del contacto (texto legible como "García", "López"). NO es un UUID.',
+      ),
+    }),
+  },
+);
+
 export const get_contact_data = tool(
   async ({ contact_id }: { contact_id: string }) => {
     try {
@@ -131,7 +174,7 @@ export const get_contact_data = tool(
       "Obtiene los detalles básicos de un contacto: nombre (first_name, last_name), canales de comunicación (communication_channels como email, teléfono), y detalles personales básicos (details). Usa esta tool cuando necesites información de contacto básica, nombre completo, o formas de comunicarse con la persona. NO contiene intereses ni relaciones semánticas.",
     schema: z.object({
       contact_id: z.string().describe(
-        "El UUID del contacto. Si está en el contexto del mensaje del usuario, úsalo directamente.",
+        'El UUID del contacto (formato: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"). NO uses un nombre de persona aquí, usa el UUID del CONTEXT.',
       ),
     }),
   },
@@ -173,7 +216,7 @@ export const get_contact_context_from_graph = tool(
       "Obtiene el contexto semántico y relacional del contacto desde el grafo de conocimiento. Esto incluye: intereses, hobbies, temas de conversación, relaciones con otros conceptos, y cualquier información contextual extraída de interacciones previas. Los datos vienen como nodos semánticos (semantic_nodes) conectados al contacto a través de edges. USA ESTA TOOL cuando el usuario pregunte por: intereses, temas, hobbies, relaciones, contexto social, o cualquier cosa que no sea información básica de contacto.",
     schema: z.object({
       contact_id: z.string().describe(
-        "El UUID del contacto. Si está en el contexto del mensaje del usuario, úsalo directamente.",
+        'El UUID del contacto (formato: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"). NO uses un nombre de persona, usa el UUID del CONTEXT.',
       ),
     }),
   },
@@ -227,10 +270,14 @@ export const update_contact_details = tool(
     description:
       "Actualiza información básica del contacto: nombre (first_name), apellido (last_name), o canales de comunicación (communication_channels como email, teléfono). NO uses esta tool para actualizar el resumen 'details' - ese se genera automáticamente desde el grafo.",
     schema: z.object({
-      contact_id: z.string().describe("El UUID del contacto a actualizar"),
-      first_name: z.string().optional().describe("Nuevo nombre del contacto"),
+      contact_id: z.string().describe(
+        'El UUID del contacto a actualizar (formato: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"). NO uses un nombre.',
+      ),
+      first_name: z.string().optional().describe(
+        'Nuevo NOMBRE del contacto (texto legible como "Mencía"). NO es un UUID.',
+      ),
       last_name: z.string().optional().describe(
-        "Nuevo apellido del contacto",
+        'Nuevo APELLIDO del contacto (texto legible como "García"). NO es un UUID.',
       ),
       communication_channels: z.record(z.string(), z.string()).optional()
         .describe(
@@ -279,12 +326,14 @@ export const search_semantic_nodes = tool(
     description:
       "Busca nodos semánticos existentes en el grafo del usuario. Usa esta tool ANTES de crear un nuevo nodo para evitar duplicados. Puedes filtrar por tipo (type) como 'Empresa', 'Interés', 'Emoción', etc., y por etiqueta (label_search) para búsqueda parcial. Retorna máximo 20 resultados.",
     schema: z.object({
-      user_id: z.string().describe("El UUID del usuario propietario del grafo"),
+      user_id: z.string().describe(
+        'El UUID del usuario propietario del grafo (formato: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")',
+      ),
       type: z.string().optional().describe(
-        "Filtrar por tipo de nodo: Empresa, Interés, Emoción, Hobby, etc.",
+        'Filtrar por TIPO de nodo (texto como "Empresa", "Interés", "Emoción", "Hobby"). NO es un UUID.',
       ),
       label_search: z.string().optional().describe(
-        "Búsqueda parcial en la etiqueta del nodo (ej: 'tecnolog' encuentra 'startup tecnológica')",
+        'Búsqueda parcial en la ETIQUETA del nodo (texto como "tecnolog" encuentra "startup tecnológica"). NO es un UUID.',
       ),
     }),
   },
@@ -295,24 +344,69 @@ export const upsert_semantic_node = tool(
     { user_id, label, type }: { user_id: string; label: string; type: string },
   ) => {
     try {
-      const { data, error } = await supabase
+      const { data: existingNode, error: searchError } = await supabase
         .from("semantic_nodes")
-        .upsert(
-          { user_id, label, type },
-          { onConflict: "user_id,label,type", ignoreDuplicates: false },
-        )
-        .select()
-        .single();
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("label", label)
+        .eq("type", type)
+        .maybeSingle();
 
-      if (error) {
-        console.error("[upsert_semantic_node] Error:", error.message);
-        throw new Error(error.message);
+      if (searchError) {
+        console.error(
+          "[upsert_semantic_node] Search Error:",
+          searchError.message,
+        );
+        throw new Error(searchError.message);
       }
 
-      return JSON.stringify({
-        message: "Nodo semántico creado o encontrado exitosamente",
-        node: data,
-      });
+      if (existingNode) {
+        const { data: updatedNode, error: updateError } = await supabase
+          .from("semantic_nodes")
+          .update({ weight: existingNode.weight + 1 })
+          .eq("id", existingNode.id)
+          .select()
+          .single();
+
+        if (updateError) {
+          console.error(
+            "[upsert_semantic_node] Update Error:",
+            updateError.message,
+          );
+          throw new Error(updateError.message);
+        }
+
+        console.log(
+          `[upsert_semantic_node] Nodo existente reutilizado. Weight incrementado a ${updatedNode.weight}`,
+        );
+        return JSON.stringify({
+          message:
+            `Nodo semántico reutilizado. Weight incrementado a ${updatedNode.weight}`,
+          node: updatedNode,
+          reused: true,
+        });
+      } else {
+        const { data: newNode, error: insertError } = await supabase
+          .from("semantic_nodes")
+          .insert({ user_id, label, type })
+          .select()
+          .single();
+
+        if (insertError) {
+          console.error(
+            "[upsert_semantic_node] Insert Error:",
+            insertError.message,
+          );
+          throw new Error(insertError.message);
+        }
+
+        console.log(`[upsert_semantic_node] Nuevo nodo creado con weight = 1`);
+        return JSON.stringify({
+          message: "Nodo semántico creado exitosamente",
+          node: newNode,
+          reused: false,
+        });
+      }
     } catch (error) {
       console.error("[upsert_semantic_node] Exception:", error);
       throw new Error((error as Error).message);
@@ -323,12 +417,14 @@ export const upsert_semantic_node = tool(
     description:
       "Crea un nuevo nodo semántico en el grafo o retorna el existente si ya existe uno con el mismo user_id, label y type. IMPORTANTE: Usa search_semantic_nodes primero para verificar si ya existe un nodo similar antes de crear uno nuevo. Los nodos representan conceptos abstractos: Empresas, Intereses, Emociones, Hobbies, etc.",
     schema: z.object({
-      user_id: z.string().describe("El UUID del usuario propietario del grafo"),
+      user_id: z.string().describe(
+        'El UUID del usuario propietario del grafo (formato: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")',
+      ),
       label: z.string().describe(
-        "La etiqueta del nodo (ej: 'startup tecnológica', 'fotografía', 'ansioso')",
+        'La ETIQUETA del nodo (texto legible como "startup tecnológica", "fotografía", "ansioso"). NO es un UUID.',
       ),
       type: z.string().describe(
-        "El tipo de nodo (ej: 'Empresa', 'Interés', 'Emoción', 'Hobby')",
+        'El TIPO de nodo (texto como "Empresa", "Interés", "Emoción", "Hobby"). NO es un UUID.',
       ),
     }),
   },
@@ -362,7 +458,7 @@ export const create_semantic_edge = tool(
         throw new Error(error.message);
       }
 
-      await regenerateContactDetails(contact_id, user_id);
+      await regenerate_contact_details(contact_id, user_id);
 
       return JSON.stringify({
         message:
@@ -379,10 +475,14 @@ export const create_semantic_edge = tool(
     description:
       "Crea una relación (edge) entre un contacto y un nodo semántico. El source_id es el contact_id, el target_id es el node_id. El relation_type describe la relación (ej: 'trabaja_en', 'interesado_en', 'se_siente'). El weight (0-1) indica la intensidad de la relación. IMPORTANTE: Esta herramienta automáticamente regenera el resumen 'details' del contacto.",
     schema: z.object({
-      user_id: z.string().describe("El UUID del usuario propietario"),
-      contact_id: z.string().describe("El UUID del contacto (source)"),
+      user_id: z.string().describe(
+        'El UUID del usuario propietario de los contactos (formato: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")',
+      ),
+      contact_id: z.string().describe(
+        "El UUID del contacto source (formato UUID). NO uses un nombre de persona.",
+      ),
       node_id: z.string().describe(
-        "El UUID del nodo semántico (target) - obtenerlo de upsert_semantic_node",
+        "El UUID del nodo semántico target (formato UUID) - obtenerlo de upsert_semantic_node",
       ),
       relation_type: z.string().describe(
         "Tipo de relación: 'trabaja_en', 'interesado_en', 'se_siente', 'practica', etc.",
@@ -415,7 +515,7 @@ export const update_edge_weight = tool(
         throw new Error(error.message);
       }
 
-      await regenerateContactDetails(contact_id, user_id);
+      await regenerate_contact_details(contact_id, user_id);
 
       return `Peso de la relación actualizado a ${weight}. Resumen del contacto actualizado automáticamente.`;
     } catch (error) {
@@ -449,20 +549,96 @@ export const delete_semantic_edge = tool(
     },
   ) => {
     try {
-      const { error } = await supabase
+      const { data: deletedEdge, error: deleteEdgeError } = await supabase
         .from("semantic_edges")
         .delete()
         .eq("id", edge_id)
-        .eq("user_id", user_id);
+        .eq("user_id", user_id)
+        .select("target_id")
+        .maybeSingle();
 
-      if (error) {
-        console.error("[delete_semantic_edge] Error:", error.message);
-        throw new Error(error.message);
+      if (deleteEdgeError) {
+        console.error(
+          "[delete_semantic_edge] Delete Edge Error:",
+          deleteEdgeError.message,
+        );
+        throw new Error(deleteEdgeError.message);
       }
 
-      await regenerateContactDetails(contact_id, user_id);
+      if (!deletedEdge) {
+        throw new Error("Edge not found");
+      }
 
-      return `Relación eliminada exitosamente. Resumen del contacto actualizado automáticamente.`;
+      const targetNodeId = deletedEdge.target_id;
+
+      const { data: node, error: getNodeError } = await supabase
+        .from("semantic_nodes")
+        .select("weight")
+        .eq("id", targetNodeId)
+        .eq("user_id", user_id)
+        .maybeSingle();
+
+      if (getNodeError) {
+        console.error(
+          "[delete_semantic_edge] Get Node Error:",
+          getNodeError.message,
+        );
+        throw new Error(getNodeError.message);
+      }
+
+      if (!node) {
+        console.log(
+          "[delete_semantic_edge] Nodo no encontrado, ya fue eliminado",
+        );
+      } else {
+        const newWeight = node.weight - 1;
+
+        if (newWeight <= 0) {
+          const { error: deleteNodeError } = await supabase
+            .from("semantic_nodes")
+            .delete()
+            .eq("id", targetNodeId)
+            .eq("user_id", user_id);
+
+          if (deleteNodeError) {
+            console.error(
+              "[delete_semantic_edge] Delete Node Error:",
+              deleteNodeError.message,
+            );
+            throw new Error(deleteNodeError.message);
+          }
+          console.log(
+            `[delete_semantic_edge] Nodo eliminado (weight llegó a ${newWeight})`,
+          );
+        } else {
+          const { error: updateNodeError } = await supabase
+            .from("semantic_nodes")
+            .update({ weight: newWeight })
+            .eq("id", targetNodeId)
+            .eq("user_id", user_id);
+
+          if (updateNodeError) {
+            console.error(
+              "[delete_semantic_edge] Update Node Error:",
+              updateNodeError.message,
+            );
+            throw new Error(updateNodeError.message);
+          }
+          console.log(
+            `[delete_semantic_edge] Weight decrementado a ${newWeight}`,
+          );
+        }
+      }
+
+      await regenerate_contact_details(contact_id, user_id);
+
+      return `Relación eliminada exitosamente. ${
+        node && node.weight > 1
+          ? `Nodo todavía en uso por otros contactos (weight: ${
+            node.weight - 1
+          })`
+          : "Nodo eliminado"
+      }. Resumen del contacto actualizado automáticamente.`;
     } catch (error) {
       console.error("[delete_semantic_edge] Exception:", error);
       throw new Error((error as Error).message);
@@ -471,7 +647,7 @@ export const delete_semantic_edge = tool(
   {
     name: "delete_semantic_edge",
     description:
-      "Elimina una relación específica entre un contacto y un nodo semántico. Usa cuando un interés, emoción o relación ya no sea relevante. Esta herramienta automáticamente regenera el resumen 'details' del contacto.",
+      "Elimina una relación específica entre un contacto y un nodo semántico, y también elimina el nodo semántico asociado. Usa cuando un interés, emoción o relación ya no sea relevante. Esta herramienta automáticamente regenera el resumen 'details' del contacto.",
     schema: z.object({
       edge_id: z.string().describe(
         "El UUID de la arista a eliminar (obtenerlo de get_contact_context_from_graph)",
@@ -494,7 +670,8 @@ export const get_contact_connections = tool(
           id,
           relation_type,
           weight,
-          contacts!semantic_edges_source_id_fkey (
+          source_id,
+          contacts(
             id,
             first_name,
             last_name
@@ -534,6 +711,135 @@ export const get_contact_connections = tool(
       user_id: z.string().describe("El UUID del usuario propietario del grafo"),
       node_id: z.string().describe(
         "El UUID del nodo semántico para buscar conexiones",
+      ),
+    }),
+  },
+);
+
+export const find_shared_connections_for_contact = tool(
+  async ({ user_id, contact_id }: { user_id: string; contact_id: string }) => {
+    try {
+      const { data, error } = await supabase.rpc("find_shared_connections", {
+        p_user_id: user_id,
+        p_contact_id: contact_id,
+      });
+
+      if (error) {
+        console.log(
+          "[find_shared_connections_for_contact] RPC no disponible, usando query manual",
+        );
+
+        const { data: contactNodes, error: nodesError } = await supabase
+          .from("semantic_edges")
+          .select(`
+            target_id,
+            relation_type,
+            semantic_nodes!semantic_edges_target_id_fkey (
+              id,
+              label,
+              type,
+              weight
+            )
+          `)
+          .eq("source_id", contact_id)
+          .eq("user_id", user_id);
+
+        if (nodesError) {
+          console.error(
+            "[find_shared_connections_for_contact] Nodes Error:",
+            nodesError.message,
+          );
+          throw new Error(nodesError.message);
+        }
+
+        if (!contactNodes || contactNodes.length === 0) {
+          return "El contacto no tiene nodos semánticos asociados.";
+        }
+
+        type NodeWithSemantic = {
+          target_id: string;
+          relation_type: string;
+          semantic_nodes: {
+            id: string;
+            label: string;
+            type: string;
+            weight: number;
+          };
+        };
+
+        const sharedNodes = (contactNodes as unknown as NodeWithSemantic[])
+          .filter((edge) => edge.semantic_nodes.weight > 1);
+
+        if (sharedNodes.length === 0) {
+          return "Este contacto no comparte nodos con otros contactos (todos los nodos tienen weight = 1).";
+        }
+
+        const connectionsPromises = sharedNodes.map(async (edge) => {
+          const { data: otherContacts, error: contactsError } = await supabase
+            .from("semantic_edges")
+            .select(`
+              source_id,
+              relation_type,
+              contacts!semantic_edges_source_id_fkey (
+                id,
+                first_name,
+                last_name
+              )
+            `)
+            .eq("target_id", edge.target_id)
+            .eq("user_id", user_id)
+            .neq("source_id", contact_id);
+
+          if (contactsError) throw contactsError;
+
+          return {
+            shared_node: {
+              id: edge.semantic_nodes.id,
+              label: edge.semantic_nodes.label,
+              type: edge.semantic_nodes.type,
+              weight: edge.semantic_nodes.weight,
+            },
+            original_relation: edge.relation_type,
+            connected_contacts: otherContacts || [],
+          };
+        });
+
+        const connections = await Promise.all(connectionsPromises);
+
+        const validConnections = connections.filter(
+          (conn) => conn.connected_contacts.length > 0,
+        );
+
+        if (validConnections.length === 0) {
+          return "No se encontraron otros contactos que compartan nodos con este contacto.";
+        }
+
+        return JSON.stringify(
+          {
+            message:
+              `Se encontraron ${validConnections.length} nodo(s) compartido(s) con otros contactos`,
+            contact_id,
+            shared_connections: validConnections,
+          },
+          null,
+          2,
+        );
+      }
+
+      return JSON.stringify(data, null, 2);
+    } catch (error) {
+      console.error("[find_shared_connections_for_contact] Exception:", error);
+      throw new Error((error as Error).message);
+    }
+  },
+  {
+    name: "find_shared_connections_for_contact",
+    description:
+      "Encuentra TODOS los contactos que comparten nodos semánticos (intereses, empresas, hobbies, etc.) con un contacto específico. Usa la columna weight de semantic_nodes para identificar nodos compartidos (weight > 1). Retorna información detallada sobre qué nodos comparten y con qué contactos. Esta es la función principal para descubrir interconexiones entre contactos.",
+    schema: z.object({
+      user_id: z.string().describe("El UUID del usuario propietario del grafo"),
+      contact_id: z.string().describe(
+        "El UUID del contacto para el cual buscar conexiones compartidas",
       ),
     }),
   },
