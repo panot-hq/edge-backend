@@ -8,6 +8,7 @@
     "@types/node": "npm:@types/node@^20.12.0",
     "deepagents": "npm:deepagents@^1.2.0",
     "langchain": "npm:langchain@^1.1.1",
+    "langsmith": "npm:langsmith@^0.3.82",
     "zod": "npm:zod"
   },
   "compilerOptions": {

@@ -1,4 +1,5 @@
-import { agent } from "./panot_os.ts";
+import { panot_orchestrator } from "./panot_os.ts";
+import { traceable } from "langsmith/traceable";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,45 +7,74 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", {
-      headers: corsHeaders,
-    });
-  }
-  try {
-    const { transcript, mode, user_id, contact_id } = await req.json();
-
-    if (!transcript) {
-      return new Response("Please provide a 'transcript'", { status: 400 });
+const handleRequest = traceable(
+  async (req: Request) => {
+    if (req.method === "OPTIONS") {
+      return new Response("ok", {
+        headers: corsHeaders,
+      });
     }
-    if (!mode) {
-      return new Response("Please provide a 'mode'", { status: 400 });
+    try {
+      const { transcript, mode, user_id, contact_id } = await req.json();
+
+      if (!transcript) {
+        return new Response("Please provide a 'transcript'", { status: 400 });
+      }
+      if (!mode) {
+        return new Response("Please provide a 'mode'", { status: 400 });
+      }
+      if (!user_id) {
+        return new Response("Please provide a 'user_id'", { status: 400 });
+      }
+
+      let contextMessage = transcript;
+      const contextParts: string[] = [];
+
+      if (user_id) contextParts.push(`user_id="${user_id}"`);
+      if (contact_id) contextParts.push(`contact_id="${contact_id}"`);
+
+      if (contextParts.length > 0) {
+        contextMessage = `[CONTEXT: ${
+          contextParts.join(", ")
+        }]\n\n${transcript}`;
+      }
+
+      const response = await traceable(
+        async () => {
+          return await panot_orchestrator.invoke({
+            messages: [{ role: "user", content: contextMessage }],
+          });
+        },
+        {
+          name: "panot_orchestrator_invoke",
+          tags: ["orchestrator", "agent"],
+          metadata: {
+            user_id,
+            contact_id: contact_id || "none",
+            mode,
+            transcript_length: transcript.length,
+          },
+        },
+      )();
+
+      const lastMessage = response.messages[response.messages.length - 1];
+
+      return new Response(
+        JSON.stringify({ answer: lastMessage.content }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    } catch (error) {
+      console.error("Error:", error);
+      return new Response(JSON.stringify({ error: (error as Error).message }), {
+        status: 500,
+      });
     }
-    if (!user_id) {
-      return new Response("Please provide a 'user_id'", { status: 400 });
-    }
+  },
+  {
+    name: "relational_agent_request",
+    tags: ["http", "main"],
+    metadata: { function: "edge-function" },
+  },
+);
 
-    let contextMessage = transcript;
-    if (contact_id) {
-      contextMessage =
-        `[CONTEXT: Current contact_id is "${contact_id}"]\n\n${transcript}`;
-    }
-
-    const response = await agent.invoke({
-      messages: [{ role: "user", content: contextMessage }],
-    });
-
-    const lastMessage = response.messages[response.messages.length - 1];
-
-    return new Response(
-      JSON.stringify({ answer: lastMessage.content }),
-      { headers: { "Content-Type": "application/json" } },
-    );
-  } catch (error) {
-    console.error("Error:", error);
-    return new Response(JSON.stringify({ error: (error as Error).message }), {
-      status: 500,
-    });
-  }
-});
+Deno.serve(handleRequest);
