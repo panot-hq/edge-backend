@@ -12,7 +12,6 @@ const supabase = createClient(
 const llm = new ChatOpenAI({
   model: "gpt-4o-mini",
   apiKey: Deno.env.get("OPENAI_API_KEY"),
-  temperature: 0.3,
 });
 
 const regenerate_contact_details = traceable(
@@ -64,18 +63,20 @@ const regenerate_contact_details = traceable(
       }).join("\n");
 
       const prompt =
-        `Genera un resumen descriptivo breve (2-4 frases) sobre este contacto basándote en su grafo de contexto.
+        `Genera un resumen breve (2-3 frases) sobre este contacto basándote únicamente en los datos del grafo.
 
 Contacto: ${contact.first_name} ${contact.last_name}
 
 Grafo de contexto:
 ${graphContext}
 
-El resumen debe:
-- Ser natural y legible para mostrar en una UI
-- Incluir información emocional, situacional y de intereses
-- Ser conciso pero informativo
-- Estar en español
+Instrucciones:
+- Menciona solo los hechos presentes en el grafo (hobbies, intereses, emociones, situaciones)
+- NO hagas inferencias, conclusiones ni juicios de valor
+- NO uses frases como "lo convierte en", "refleja que", "demuestra que"
+- Sé directo y factual
+- Usa un tono neutro y descriptivo
+- NUNCA incluyas el nombre ni el apellido del contacto en el resumen
 
 Resumen:`;
 
@@ -109,21 +110,25 @@ export const create_contact = tool(
     { user_id, first_name, last_name }: {
       user_id: string;
       first_name: string;
-      last_name: string;
+      last_name?: string;
     },
   ) => {
     try {
       const { data, error } = await supabase.from("contacts").insert({
         owner_id: user_id,
         first_name,
-        last_name,
-      }).select("id").single();
+        last_name: last_name || "",
+      }).select("id, first_name, last_name").single();
 
       if (error) {
         console.error("[create_contact] Error:", error.message);
         throw new Error(error.message);
       }
-      return JSON.stringify(data);
+
+      // Formato claro para que el agente pueda extraer el contact_id
+      return `Contacto creado exitosamente. contact_id: ${data.id}, nombre: ${data.first_name} ${
+        data.last_name || ""
+      }`.trim();
     } catch (error) {
       console.error("[create_contact] Exception:", error);
       throw new Error((error as Error).message);
@@ -132,16 +137,16 @@ export const create_contact = tool(
   {
     name: "create_contact",
     description:
-      "Crea un nuevo contacto con el user_id proporcionado. Retorna el nuevo contact_id (UUID).",
+      "Crea un nuevo contacto con el user_id proporcionado. Retorna el nuevo contact_id (UUID). El apellido es opcional y solo debe incluirse si se menciona explícitamente en el transcript.",
     schema: z.object({
       user_id: z.string().describe(
         'El UUID del usuario propietario (formato: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")',
       ),
       first_name: z.string().describe(
-        'El NOMBRE del contacto (texto legible como "Mencía", "María"). NO es un UUID.',
+        'El NOMBRE del contacto (texto legible como "Mencía", "María", "Angel"). NO es un UUID.',
       ),
-      last_name: z.string().describe(
-        'El APELLIDO del contacto (texto legible como "García", "López"). NO es un UUID.',
+      last_name: z.string().optional().describe(
+        'El APELLIDO del contacto (texto legible como "García", "López"). OPCIONAL: solo incluir si se menciona explícitamente. NO es un UUID.',
       ),
     }),
   },
@@ -432,12 +437,20 @@ export const upsert_semantic_node = tool(
 
 export const create_semantic_edge = tool(
   async (
-    { user_id, contact_id, node_id, relation_type, weight }: {
+    {
+      user_id,
+      contact_id,
+      node_id,
+      relation_type,
+      weight,
+      skip_details_regeneration,
+    }: {
       user_id: string;
       contact_id: string;
       node_id: string;
       relation_type: string;
       weight?: number;
+      skip_details_regeneration?: boolean;
     },
   ) => {
     try {
@@ -458,11 +471,14 @@ export const create_semantic_edge = tool(
         throw new Error(error.message);
       }
 
-      await regenerate_contact_details(contact_id, user_id);
+      if (!skip_details_regeneration) {
+        await regenerate_contact_details(contact_id, user_id);
+      }
 
       return JSON.stringify({
-        message:
-          "Relación creada exitosamente y resumen del contacto actualizado",
+        message: skip_details_regeneration
+          ? "Relación creada exitosamente"
+          : "Relación creada exitosamente y resumen del contacto actualizado",
         edge: data,
       });
     } catch (error) {
@@ -473,7 +489,7 @@ export const create_semantic_edge = tool(
   {
     name: "create_semantic_edge",
     description:
-      "Crea una relación (edge) entre un contacto y un nodo semántico. El source_id es el contact_id, el target_id es el node_id. El relation_type describe la relación (ej: 'trabaja_en', 'interesado_en', 'se_siente'). El weight (0-1) indica la intensidad de la relación. IMPORTANTE: Esta herramienta automáticamente regenera el resumen 'details' del contacto.",
+      "Crea una relación (edge) entre un contacto y un nodo semántico. El source_id es el contact_id, el target_id es el node_id. El relation_type describe la relación (ej: 'trabaja_en', 'interesado_en', 'se_siente'). El weight (0-1) indica la intensidad de la relación. IMPORTANTE: Esta herramienta automáticamente regenera el resumen 'details' del contacto EXCEPTO si skip_details_regeneration es true (usado en modo CONTACT_DETAILS_UPDATE).",
     schema: z.object({
       user_id: z.string().describe(
         'El UUID del usuario propietario de los contactos (formato: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")',
@@ -490,17 +506,21 @@ export const create_semantic_edge = tool(
       weight: z.number().optional().describe(
         "Peso/intensidad de la relación (0.0 a 1.0). Por defecto 1.0",
       ),
+      skip_details_regeneration: z.boolean().optional().describe(
+        "Si es true, NO regenera el resumen 'details' del contacto. Usar SOLO en modo CONTACT_DETAILS_UPDATE cuando el usuario ha editado manualmente el resumen.",
+      ),
     }),
   },
 );
 
 export const update_edge_weight = tool(
   async (
-    { edge_id, user_id, contact_id, weight }: {
+    { edge_id, user_id, contact_id, weight, skip_details_regeneration }: {
       edge_id: string;
       user_id: string;
       contact_id: string;
       weight: number;
+      skip_details_regeneration?: boolean;
     },
   ) => {
     try {
@@ -515,9 +535,13 @@ export const update_edge_weight = tool(
         throw new Error(error.message);
       }
 
-      await regenerate_contact_details(contact_id, user_id);
+      if (!skip_details_regeneration) {
+        await regenerate_contact_details(contact_id, user_id);
+      }
 
-      return `Peso de la relación actualizado a ${weight}. Resumen del contacto actualizado automáticamente.`;
+      return skip_details_regeneration
+        ? `Peso de la relación actualizado a ${weight}.`
+        : `Peso de la relación actualizado a ${weight}. Resumen del contacto actualizado automáticamente.`;
     } catch (error) {
       console.error("[update_edge_weight] Exception:", error);
       throw new Error((error as Error).message);
@@ -526,7 +550,7 @@ export const update_edge_weight = tool(
   {
     name: "update_edge_weight",
     description:
-      "Modifica la intensidad (weight) de una relación existente entre un contacto y un nodo semántico. Útil para reflejar cambios en la relevancia de un interés, emoción o relación. Esta herramienta automáticamente regenera el resumen 'details' del contacto.",
+      "Modifica la intensidad (weight) de una relación existente entre un contacto y un nodo semántico. Útil para reflejar cambios en la relevancia de un interés, emoción o relación. Esta herramienta automáticamente regenera el resumen 'details' del contacto EXCEPTO si skip_details_regeneration es true (usado en modo CONTACT_DETAILS_UPDATE).",
     schema: z.object({
       edge_id: z.string().describe(
         "El UUID de la arista a modificar (obtenerlo de get_contact_context_from_graph)",
@@ -536,16 +560,20 @@ export const update_edge_weight = tool(
         "El UUID del contacto para regenerar su resumen",
       ),
       weight: z.number().describe("Nuevo peso de la relación (0.0 a 1.0)"),
+      skip_details_regeneration: z.boolean().optional().describe(
+        "Si es true, NO regenera el resumen 'details' del contacto. Usar SOLO en modo CONTACT_DETAILS_UPDATE cuando el usuario ha editado manualmente el resumen.",
+      ),
     }),
   },
 );
 
 export const delete_semantic_edge = tool(
   async (
-    { edge_id, user_id, contact_id }: {
+    { edge_id, user_id, contact_id, skip_details_regeneration }: {
       edge_id: string;
       user_id: string;
       contact_id: string;
+      skip_details_regeneration?: boolean;
     },
   ) => {
     try {
@@ -630,15 +658,17 @@ export const delete_semantic_edge = tool(
         }
       }
 
-      await regenerate_contact_details(contact_id, user_id);
+      if (!skip_details_regeneration) {
+        await regenerate_contact_details(contact_id, user_id);
+      }
 
-      return `Relación eliminada exitosamente. ${
-        node && node.weight > 1
-          ? `Nodo todavía en uso por otros contactos (weight: ${
-            node.weight - 1
-          })`
-          : "Nodo eliminado"
-      }. Resumen del contacto actualizado automáticamente.`;
+      const nodeStatus = node && node.weight > 1
+        ? `Nodo todavía en uso por otros contactos (weight: ${node.weight - 1})`
+        : "Nodo eliminado";
+
+      return skip_details_regeneration
+        ? `Relación eliminada exitosamente. ${nodeStatus}.`
+        : `Relación eliminada exitosamente. ${nodeStatus}. Resumen del contacto actualizado automáticamente.`;
     } catch (error) {
       console.error("[delete_semantic_edge] Exception:", error);
       throw new Error((error as Error).message);
@@ -647,7 +677,7 @@ export const delete_semantic_edge = tool(
   {
     name: "delete_semantic_edge",
     description:
-      "Elimina una relación específica entre un contacto y un nodo semántico, y también elimina el nodo semántico asociado. Usa cuando un interés, emoción o relación ya no sea relevante. Esta herramienta automáticamente regenera el resumen 'details' del contacto.",
+      "Elimina una relación específica entre un contacto y un nodo semántico, y también elimina el nodo semántico asociado. Usa cuando un interés, emoción o relación ya no sea relevante. Esta herramienta automáticamente regenera el resumen 'details' del contacto EXCEPTO si skip_details_regeneration es true (usado en modo CONTACT_DETAILS_UPDATE).",
     schema: z.object({
       edge_id: z.string().describe(
         "El UUID de la arista a eliminar (obtenerlo de get_contact_context_from_graph)",
@@ -655,6 +685,9 @@ export const delete_semantic_edge = tool(
       user_id: z.string().describe("El UUID del usuario propietario"),
       contact_id: z.string().describe(
         "El UUID del contacto para regenerar su resumen",
+      ),
+      skip_details_regeneration: z.boolean().optional().describe(
+        "Si es true, NO regenera el resumen 'details' del contacto. Usar SOLO en modo CONTACT_DETAILS_UPDATE cuando el usuario ha editado manualmente el resumen.",
       ),
     }),
   },

@@ -20,7 +20,12 @@ const handleRequest = traceable(
       if (!transcript) {
         return new Response("Please provide a 'transcript'", { status: 400 });
       }
-      if (!mode || !["CONVERSATIONAL", "ACTIONABLE"].includes(mode)) {
+      if (
+        !mode ||
+        !["CONVERSATIONAL", "ACTIONABLE", "CONTACT_DETAILS_UPDATE"].includes(
+          mode,
+        )
+      ) {
         return new Response("Please provide a 'mode'", { status: 400 });
       }
       if (!user_id) {
@@ -61,7 +66,7 @@ const handleRequest = traceable(
 
       const lastMessage = response.messages[response.messages.length - 1];
 
-      if (mode === "ACTIONABLE") {
+      if (mode === "ACTIONABLE" || mode === "CONTACT_DETAILS_UPDATE") {
         const content = lastMessage.content as string;
         if (content.includes("OK") || content.includes("ERROR:")) {
           return new Response(

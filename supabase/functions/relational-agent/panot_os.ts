@@ -26,7 +26,6 @@ import {
 const llm = new ChatOpenAI({
   model: "gpt-4o-mini",
   apiKey: Deno.env.get("OPENAI_API_KEY"),
-  temperature: 0,
 });
 
 const contact_agent = createAgent({
