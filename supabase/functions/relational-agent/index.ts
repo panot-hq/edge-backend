@@ -15,7 +15,8 @@ const handleRequest = traceable(
       });
     }
     try {
-      const { transcript, mode, user_id, contact_id } = await req.json();
+      const { transcript, mode, user_id, contact_id, node_id } = await req
+        .json();
 
       if (!transcript) {
         return new Response("Please provide a 'transcript'", { status: 400 });
@@ -37,6 +38,7 @@ const handleRequest = traceable(
 
       if (user_id) contextParts.push(`user_id="${user_id}"`);
       if (contact_id) contextParts.push(`contact_id="${contact_id}"`);
+      if (node_id) contextParts.push(`node_id="${node_id}"`);
 
       if (contextParts.length > 0) {
         contextMessage = `[CONTEXT: ${
@@ -58,6 +60,7 @@ const handleRequest = traceable(
           metadata: {
             user_id,
             contact_id: contact_id || "none",
+            node_id: node_id || "none",
             mode,
             transcript_length: transcript.length,
           },

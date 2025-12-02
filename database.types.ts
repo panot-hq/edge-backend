@@ -23,6 +23,7 @@ export type Database = {
           first_name: string | null
           id: string
           last_name: string | null
+          node_id: string
           owner_id: string
           updated_at: string | null
         }
@@ -34,6 +35,7 @@ export type Database = {
           first_name?: string | null
           id?: string
           last_name?: string | null
+          node_id: string
           owner_id: string
           updated_at?: string | null
         }
@@ -45,10 +47,19 @@ export type Database = {
           first_name?: string | null
           id?: string
           last_name?: string | null
+          node_id?: string
           owner_id?: string
           updated_at?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "contacts_node_id_fkey"
+            columns: ["node_id"]
+            isOneToOne: false
+            referencedRelation: "semantic_nodes"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       interactions: {
         Row: {
@@ -89,13 +100,6 @@ export type Database = {
             referencedRelation: "contacts"
             referencedColumns: ["id"]
           },
-          {
-            foreignKeyName: "interactions_owner_id_fkey"
-            columns: ["owner_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["user_id"]
-          },
         ]
       }
       profiles: {
@@ -133,7 +137,6 @@ export type Database = {
           source_id: string
           target_id: string
           user_id: string
-          weight: number | null
         }
         Insert: {
           created_at?: string | null
@@ -142,7 +145,6 @@ export type Database = {
           source_id: string
           target_id: string
           user_id: string
-          weight?: number | null
         }
         Update: {
           created_at?: string | null
@@ -151,9 +153,15 @@ export type Database = {
           source_id?: string
           target_id?: string
           user_id?: string
-          weight?: number | null
         }
         Relationships: [
+          {
+            foreignKeyName: "semantic_edges_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "semantic_nodes"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "semantic_edges_target_id_fkey"
             columns: ["target_id"]
@@ -165,25 +173,34 @@ export type Database = {
       }
       semantic_nodes: {
         Row: {
-          created_at: string | null
+          concept_category: string | null
+          created_at: string
+          embedding: string | null
           id: string
           label: string
-          type: string
+          type: Database["public"]["Enums"]["node_type"]
           user_id: string
+          weight: number
         }
         Insert: {
-          created_at?: string | null
+          concept_category?: string | null
+          created_at?: string
+          embedding?: string | null
           id?: string
           label: string
-          type: string
+          type: Database["public"]["Enums"]["node_type"]
           user_id: string
+          weight?: number
         }
         Update: {
-          created_at?: string | null
+          concept_category?: string | null
+          created_at?: string
+          embedding?: string | null
           id?: string
           label?: string
-          type?: string
+          type?: Database["public"]["Enums"]["node_type"]
           user_id?: string
+          weight?: number
         }
         Relationships: []
       }
@@ -192,10 +209,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      find_shared_connections: {
+        Args: { p_contact_id: string; p_user_id: string }
+        Returns: Json
+      }
       is_my_contact: { Args: { c_id: string }; Returns: boolean }
     }
     Enums: {
-      [_ in never]: never
+      node_type: "CONTACT" | "CONCEPT"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -322,6 +343,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      node_type: ["CONTACT", "CONCEPT"],
+    },
   },
 } as const

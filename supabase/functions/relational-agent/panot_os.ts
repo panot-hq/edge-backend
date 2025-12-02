@@ -4,11 +4,14 @@ import { ChatOpenAI } from "@langchain/openai";
 import { traceable } from "langsmith/traceable";
 
 import {
+  add_info_to_contact_graph,
+  batch_add_info_to_graph,
+  create_concept_relationship,
   create_contact,
   create_semantic_edge,
   delete_semantic_edge,
   find_shared_connections_for_contact,
-  get_contact_connections,
+  get_contact_connections_from_node,
   get_contact_context_from_graph,
   get_contact_data,
   search_semantic_nodes,
@@ -41,24 +44,28 @@ const contact_agent = createAgent({
 const context_graph_agent = createAgent({
   model: llm.model,
   tools: [
+    add_info_to_contact_graph,
+    batch_add_info_to_graph,
     get_contact_context_from_graph,
+    find_shared_connections_for_contact,
+    get_contact_connections_from_node,
+    create_concept_relationship,
+    update_edge_weight,
+    delete_semantic_edge,
     search_semantic_nodes,
     upsert_semantic_node,
     create_semantic_edge,
-    update_edge_weight,
-    delete_semantic_edge,
-    get_contact_connections,
-    find_shared_connections_for_contact,
   ],
   systemPrompt: CONTEXT_GRAPH_PROMPT,
 });
 
 const manageContactFn = traceable(
   async (
-    { user_id, contact_id, request }: {
+    { user_id, contact_id, request, mode }: {
       user_id: string;
       contact_id?: string;
       request: string;
+      mode: string;
     },
   ) => {
     let contextStr = `user_id="${user_id}"`;
@@ -69,7 +76,7 @@ const manageContactFn = traceable(
     const result = await contact_agent.invoke({
       messages: [{
         role: "user",
-        content: `[CONTEXT: ${contextStr}]\n\nTarea: ${request}`,
+        content: `[CONTEXT: ${contextStr}][MODE: ${mode}]\n\nTarea: ${request}`,
       }],
     });
     const lastMessage = result.messages[result.messages.length - 1];
@@ -86,17 +93,27 @@ const manageContact = tool(
   manageContactFn,
   {
     name: "manageContact",
-    description:
-      "Gestiona contactos: CREAR nuevos contactos (requiere user_id), o LEER/ACTUALIZAR contactos existentes (requiere contact_id). Para crear un contacto, solo necesitas user_id. Para leer/actualizar, necesitas contact_id.",
+    description: `Gestiona contactos: CREAR nuevos o LEER/ACTUALIZAR existentes.
+
+CREAR (sin contact_id):
+- Retorna: { contact_id, node_id } 
+- El node_id es NECESARIO para manageContextGraph
+
+LEER/ACTUALIZAR (con contact_id):
+- Obtiene datos básicos incluyendo node_id
+- Actualiza nombre, apellido, canales de comunicación`,
     schema: z.object({
       user_id: z.string().describe(
-        "El UUID del usuario propietario de los contactos (siempre requerido)",
+        "El UUID del usuario propietario (siempre requerido)",
       ),
       contact_id: z.string().optional().describe(
-        "El UUID del contacto específico (solo para leer/actualizar, no para crear)",
+        "El UUID del contacto (solo para leer/actualizar, no para crear)",
       ),
       request: z.string().describe(
-        "La solicitud: crear nuevo contacto, consultar información, o actualizar datos",
+        "La solicitud: crear, consultar, o actualizar datos básicos",
+      ),
+      mode: z.string().describe(
+        "El modo de operación: CONVERSATIONAL, ACTIONABLE, CONTACT_DETAILS_UPDATE",
       ),
     }),
   },
@@ -104,17 +121,23 @@ const manageContact = tool(
 
 const manageContextGraphFn = traceable(
   async (
-    { contact_id, user_id, request }: {
+    { node_id, contact_id, user_id, request, mode }: {
+      node_id: string;
       contact_id: string;
       user_id: string;
       request: string;
+      mode: string;
     },
   ) => {
+    const modeWarning = mode === "CONTACT_DETAILS_UPDATE"
+      ? "\n\n MODO CRÍTICO: CONTACT_DETAILS_UPDATE DETECTADO\n→ DEBES usar skip_details_regeneration: true en TODAS las herramientas\n→ BAJO NINGÚN CONCEPTO actualices el campo 'details'\n"
+      : "";
+
     const result = await context_graph_agent.invoke({
       messages: [{
         role: "user",
         content:
-          `[CONTEXT: contact_id="${contact_id}", user_id="${user_id}"]\n\nTarea: ${request}`,
+          `[CONTEXT: node_id="${node_id}", contact_id="${contact_id}", user_id="${user_id}"]${modeWarning}\n\nTarea: ${request}`,
       }],
     });
     const lastMessage = result.messages[result.messages.length - 1];
@@ -131,15 +154,36 @@ const manageContextGraph = tool(
   manageContextGraphFn,
   {
     name: "manageContextGraph",
-    description:
-      `Gestiona el grafo de conocimiento del contacto: leer contexto, crear/modificar nodos semánticos 
-      (intereses, emociones, relaciones), gestionar edges, y descubrir interconexiones entre contactos. 
-      Esta herramienta actualiza automáticamente el resumen 'details' del contacto cuando se modifica el grafo.`,
+    description: `Gestiona el grafo de conocimiento del contacto.
+
+REQUIERE:
+- node_id: UUID del nodo CONTACT en semantic_nodes
+- contact_id: UUID del contacto en la tabla contacts
+- user_id: UUID del usuario propietario
+
+CAPACIDADES:
+- Añadir información contextual (intereses, hobbies, emociones, empresas)
+- Crear relaciones entre conceptos (ej: "Marco Aurelio" ES_FIGURA_DE "estoicismo")
+- Consultar el grafo completo del contacto
+- Descubrir INTERCONEXIONES entre contactos
+- Modificar/eliminar relaciones existentes
+
+MATCHING INTELIGENTE:
+- Para CONCEPTOS (Hobby, Interés): Busca matches semánticos
+- Para INSTANCIAS (Universidad, Empresa): NO hace match (UPM ≠ Complutense)`,
     schema: z.object({
-      contact_id: z.string().describe("El UUID del contacto"),
+      node_id: z.string().describe(
+        "El UUID del nodo CONTACT (de semantic_nodes). Obtenerlo de manageContact.",
+      ),
+      contact_id: z.string().describe(
+        "El UUID del contacto (de la tabla contacts). Obtenerlo de manageContact.",
+      ),
       user_id: z.string().describe("El UUID del usuario propietario"),
       request: z.string().describe(
-        "La solicitud para el grafo de conocimiento: consultar, añadir, modificar o eliminar información contextual",
+        "La solicitud: añadir info, crear relaciones entre conceptos, consultar grafo, buscar interconexiones, o modificar/eliminar",
+      ),
+      mode: z.string().describe(
+        "El modo de operación: CONVERSATIONAL, ACTIONABLE, CONTACT_DETAILS_UPDATE",
       ),
     }),
   },
