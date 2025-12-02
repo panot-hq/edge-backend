@@ -35,7 +35,7 @@ type SimilarNode = SemanticNode & {
 };
 
 const SIMILARITY_THRESHOLD_EXACT = 0.90;
-const SIMILARITY_THRESHOLD_RELATED = 0.40;
+const SIMILARITY_THRESHOLD_RELATED = 0.45;
 
 const generate_embedding = traceable(
   async (label: string, category: string): Promise<number[]> => {
