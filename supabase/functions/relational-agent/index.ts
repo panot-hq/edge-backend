@@ -67,10 +67,45 @@ const handleRequest = traceable(
         },
       )();
 
-      const lastMessage = response.messages[response.messages.length - 1];
+      if (!response) {
+        console.error("Response is null or undefined");
+        return new Response(
+          JSON.stringify({ error: "No response from agent" }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      let content: string;
+
+      if (response.messages && response.messages.length > 0) {
+        const lastMessage = response.messages[response.messages.length - 1];
+        content = typeof lastMessage.content === "string"
+          ? lastMessage.content
+          : JSON.stringify(lastMessage.content);
+      } else {
+        console.error(
+          "Unexpected response format or empty messages:",
+          JSON.stringify(response, null, 2),
+        );
+        content = "OK";
+      }
+      if (content === "__end__" || content.includes('"__end__"')) {
+        console.warn(
+          "Received __end__ signal, treating as successful completion",
+        );
+        if (mode === "ACTIONABLE" || mode === "CONTACT_DETAILS_UPDATE") {
+          return new Response(
+            JSON.stringify({ status: "OK" }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({ answer: "Operación completada correctamente." }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
 
       if (mode === "ACTIONABLE" || mode === "CONTACT_DETAILS_UPDATE") {
-        const content = lastMessage.content as string;
         if (content.includes("OK") || content.includes("ERROR:")) {
           return new Response(
             JSON.stringify({ status: content }),
@@ -83,7 +118,7 @@ const handleRequest = traceable(
         );
       }
       return new Response(
-        JSON.stringify({ answer: lastMessage.content }),
+        JSON.stringify({ answer: content }),
         { headers: { "Content-Type": "application/json" } },
       );
     } catch (error) {

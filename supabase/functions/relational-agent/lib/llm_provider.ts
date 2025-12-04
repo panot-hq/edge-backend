@@ -1,14 +1,19 @@
 import { ChatOpenAI, OpenAIEmbeddings } from "@langchain/openai";
 
 export const llm = new ChatOpenAI({
-  model: "gpt-4o-mini",
+  model: "gpt-5-mini",
   apiKey: Deno.env.get("OPENAI_API_KEY"),
+  modelKwargs: {
+    reasoning_effort: "minimal",
+  },
 });
 
 export const orchestratorLLM = new ChatOpenAI({
-  model: "gpt-4o-mini",
+  model: "gpt-5-mini",
   apiKey: Deno.env.get("OPENAI_API_KEY"),
-  temperature: 0,
+  modelKwargs: {
+    reasoning_effort: "minimal",
+  },
 });
 
 export const embeddings = new OpenAIEmbeddings({

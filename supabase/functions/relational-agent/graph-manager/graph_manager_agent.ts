@@ -6,7 +6,6 @@ import { z } from "zod";
 import { CONTEXT_GRAPH_PROMPT } from "./prompt.ts";
 
 import {
-  add_info_to_contact_graph,
   batch_add_info_to_graph,
   delete_semantic_node,
   find_shared_connections_for_contact,
@@ -17,9 +16,8 @@ import {
 } from "./tools.ts";
 
 const context_graph_agent = createAgent({
-  model: llm.model,
+  model: llm as any,
   tools: [
-    add_info_to_contact_graph,
     batch_add_info_to_graph,
     get_contact_context_from_graph,
     find_shared_connections_for_contact,
@@ -41,19 +39,22 @@ const manageContextGraphFn = traceable(
       mode: string;
     },
   ) => {
-    const modeWarning = mode === "CONTACT_DETAILS_UPDATE"
-      ? "\n\n MODO CRÍTICO: CONTACT_DETAILS_UPDATE DETECTADO\n→ DEBES usar skip_details_regeneration: true en TODAS las herramientas\n→ BAJO NINGÚN CONCEPTO actualices el campo 'details'\n"
-      : "";
-
     const result = await context_graph_agent.invoke({
       messages: [{
         role: "user",
         content:
-          `[CONTEXT: node_id="${node_id}", contact_id="${contact_id}", user_id="${user_id}"]${modeWarning}\n\nTarea: ${request}`,
+          `[CONTEXT: node_id="${node_id}", contact_id="${contact_id}", user_id="${user_id}, mode="${mode}"]\n\nTarea: ${request}`,
       }],
     });
-    const lastMessage = result.messages[result.messages.length - 1];
-    return lastMessage.content;
+
+    if (result.messages && result.messages.length > 0) {
+      const lastMessage = result.messages[result.messages.length - 1];
+      return typeof lastMessage.content === "string"
+        ? lastMessage.content
+        : JSON.stringify(lastMessage.content);
+    }
+
+    return "OK";
   },
   {
     name: "manageContextGraph",

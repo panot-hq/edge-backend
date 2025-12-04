@@ -9,7 +9,7 @@ import { NodeType, SimilarNode } from "../types.ts";
 import { EmbeddingCache } from "../lib/embedding_cache.ts";
 
 const SIMILARITY_THRESHOLD_EXACT = 0.90;
-const SIMILARITY_THRESHOLD_RELATED = 0.45;
+const SIMILARITY_THRESHOLD_RELATED = 0.47;
 
 const embeddingCache = new EmbeddingCache();
 
@@ -176,6 +176,7 @@ Grafo de contexto:
 ${graphContext}
 
 Instrucciones:
+- Habla como si hablases al usuario, es decir que por ejemplo si se menciona como se le conoció al contacto entonces di algo como "le conociste en.."
 - Nunca empieces con "el contacto...", "la persona..." etc, directamente menciona los datos
 - Menciona solo los hechos presentes en el grafo (hobbies, intereses, emociones, situaciones)
 - NO hagas inferencias, conclusiones ni juicios de valor
@@ -636,13 +637,24 @@ export const delete_semantic_node = tool(
     },
   ) => {
     try {
-      const { data: deletedNode, error: deleteNodeError } = await supabase
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(node_id)) {
+        throw new Error(
+          `UUID inválido para node_id: "${node_id}". Debe ser un UUID completo de 36 caracteres.`,
+        );
+      }
+      if (!uuidRegex.test(user_id)) {
+        throw new Error(
+          `UUID inválido para user_id: "${user_id}". Debe ser un UUID completo de 36 caracteres.`,
+        );
+      }
+
+      const { error: deleteNodeError } = await supabase
         .from("semantic_nodes")
         .delete()
         .eq("id", node_id)
-        .eq("user_id", user_id)
-        .select("target_id")
-        .maybeSingle();
+        .eq("user_id", user_id);
 
       if (deleteNodeError) {
         console.error(
@@ -650,10 +662,6 @@ export const delete_semantic_node = tool(
           deleteNodeError.message,
         );
         throw new Error(deleteNodeError.message);
-      }
-
-      if (!deletedNode) {
-        throw new Error("Node not found or does not belong to the user");
       }
 
       if (!skip_details_regeneration) {
@@ -677,158 +685,6 @@ export const delete_semantic_node = tool(
       node_id: z.string().describe("El UUID del nodo a eliminar"),
       user_id: z.string().describe("El UUID del usuario propietario"),
       contact_id: z.string().describe("El UUID del contacto propietario"),
-      skip_details_regeneration: z
-        .boolean()
-        .describe(
-          "Si true, no regenera details. Usar SIEMPRE que se esté en modo CONTACT_DETAILS_UPDATE.",
-        ),
-    }),
-  },
-);
-
-export const add_info_to_contact_graph = tool(
-  async ({
-    user_id,
-    node_id,
-    contact_id,
-    label,
-    concept_category,
-    relation_type,
-    skip_details_regeneration,
-  }: {
-    user_id: string;
-    node_id: string;
-    contact_id: string;
-    label: string;
-    concept_category: string;
-    relation_type: string;
-    skip_details_regeneration: boolean;
-  }) => {
-    try {
-      console.log(
-        `[add_info_to_contact_graph] Processing ${label} for contact ${node_id}`,
-      );
-
-      const { data: currentContactEdges } = await supabase
-        .from("semantic_edges")
-        .select("target_id")
-        .eq("source_id", node_id)
-        .eq("user_id", user_id);
-
-      const currentContactNodeIds = new Set(
-        currentContactEdges?.map((e) => e.target_id) || [],
-      );
-
-      const embedding = await generate_embedding(
-        label,
-        concept_category,
-        relation_type,
-      );
-
-      const matches = await find_similar_nodes(
-        user_id,
-        embedding,
-        Array.from(currentContactNodeIds),
-      );
-
-      const match = matches[0];
-      let targetNodeId: string;
-
-      if (match && match.similarity >= SIMILARITY_THRESHOLD_EXACT) {
-        targetNodeId = match.id;
-        console.log(`Exact match for ${label} -> ${match.id}`);
-      } else {
-        const { data: newNode, error: insertError } = await supabase
-          .from("semantic_nodes")
-          .insert({
-            user_id,
-            type: "CONCEPT",
-            label,
-            concept_category,
-            weight: 1,
-            embedding,
-          })
-          .select("id")
-          .single();
-
-        if (insertError) {
-          console.error(
-            `[batch] Error creating node for ${label}:`,
-            insertError.message,
-          );
-          throw new Error(insertError.message);
-        }
-        targetNodeId = newNode.id;
-
-        if (match && match.similarity >= SIMILARITY_THRESHOLD_RELATED) {
-          await supabase.from("semantic_edges").insert({
-            user_id,
-            source_id: targetNodeId,
-            target_id: match.id,
-            relation_type: "RELACIONADO_CON",
-          });
-          console.log(
-            `Created relation "${label}" -> "${match.label}"`,
-          );
-        }
-        if (currentContactNodeIds.has(targetNodeId)) {
-          console.log(`Contact already connected to ${targetNodeId}`);
-        }
-        const { error: edgeError } = await supabase
-          .from("semantic_edges")
-          .insert({
-            user_id,
-            source_id: node_id,
-            target_id: targetNodeId,
-            relation_type,
-          });
-
-        if (edgeError) {
-          console.error(
-            `Error connecting contact to ${targetNodeId}:`,
-            edgeError.message,
-          );
-        } else {
-          currentContactNodeIds.add(targetNodeId);
-        }
-      }
-      if (!skip_details_regeneration) {
-        await regenerate_contact_details(contact_id, node_id, "", false);
-      }
-    } catch (error) {
-      console.error("[add_info_to_contact_graph] Exception:", error);
-      throw new Error((error as Error).message);
-    }
-  },
-  {
-    name: "add_info_to_contact_graph",
-    description:
-      `HERRAMIENTA PRINCIPAL para añadir información contextual a un contacto.
-
-EN UNA SOLA LLAMADA: busca nodo → crea si no existe → crea arista.
-
-MATCHING INTELIGENTE:
-- Para CONCEPTOS (Hobby, Interés, Emoción): Busca matches semánticos
-- Para INSTANCIAS (Universidad, Empresa, Persona): NO hace match (UPM ≠ Complutense)
-
-Usa esta herramienta en lugar de search + upsert + create_edge.`,
-    schema: z.object({
-      user_id: z.string().describe("UUID del usuario propietario"),
-      node_id: z.string().describe(
-        "UUID del nodo CONTACT (el node_id del contacto, NO el contact_id)",
-      ),
-      contact_id: z.string().describe(
-        "UUID del contacto (para regenerar details)",
-      ),
-      label: z.string().describe(
-        'Etiqueta del concepto (ej: "pádel", "Google")',
-      ),
-      concept_category: z.string().describe(
-        'Categoría: "Hobby", "Empresa", "Interés", "Emoción", "Universidad", etc.',
-      ),
-      relation_type: z.string().describe(
-        'Tipo de relación: "PRACTICA", "TRABAJA_EN", "INTERESADO_EN", etc.',
-      ),
       skip_details_regeneration: z
         .boolean()
         .describe(
@@ -992,9 +848,9 @@ export const batch_add_info_to_graph = tool(
     description:
       `Añade MÚLTIPLES items de información a un contacto EN UNA SOLA LLAMADA.
 
-MUY EFICIENTE: Solo regenera details UNA VEZ al final.
+    MUY EFICIENTE: Solo regenera details UNA VEZ al final.
 
-Usa esta herramienta cuando tengas 2+ items que añadir al mismo contacto.`,
+    Usa esta herramienta cuando tengas 2+ items que añadir al mismo contacto.`,
     schema: z.object({
       user_id: z.string().describe("UUID del usuario propietario"),
       node_id: z.string().describe("UUID del nodo CONTACT"),
@@ -1006,7 +862,9 @@ Usa esta herramienta cuando tengas 2+ items que añadir al mismo contacto.`,
           z.object({
             label: z.string().describe('Etiqueta (ej: "pádel")'),
             concept_category: z.string().describe('Categoría (ej: "Hobby")'),
-            relation_type: z.string().describe('Relación (ej: "PRACTICA")'),
+            relation_type: z.string().describe(
+              "Tipo de la relación entre los dos nodos ESCOGER LA QUE MEJOR SE AJUSTE AL TEXTO DE LA PETICIÓN",
+            ),
           }),
         )
         .describe("Array de items a añadir"),

@@ -12,7 +12,7 @@ import {
 import { CONTACT_PROMPT } from "./prompt.ts";
 
 const contact_agent = createAgent({
-  model: llm.model,
+  model: llm as any,
   tools: [
     create_contact,
     get_contact_data,
@@ -23,11 +23,10 @@ const contact_agent = createAgent({
 
 const manageContactFn = traceable(
   async (
-    { user_id, contact_id, request, mode }: {
+    { user_id, contact_id, request }: {
       user_id: string;
       contact_id?: string;
       request: string;
-      mode: string;
     },
   ) => {
     let contextStr = `user_id="${user_id}"`;
@@ -38,11 +37,17 @@ const manageContactFn = traceable(
     const result = await contact_agent.invoke({
       messages: [{
         role: "user",
-        content: `[CONTEXT: ${contextStr}][MODE: ${mode}]\n\nTarea: ${request}`,
+        content: `[CONTEXT: ${contextStr}]\n\nTarea: ${request}`,
       }],
     });
-    const lastMessage = result.messages[result.messages.length - 1];
-    return lastMessage.content;
+
+    if (result.messages && result.messages.length > 0) {
+      const lastMessage = result.messages[result.messages.length - 1];
+      return typeof lastMessage.content === "string"
+        ? lastMessage.content
+        : JSON.stringify(lastMessage.content);
+    }
+    return "OK";
   },
   {
     name: "manageContact",
@@ -59,11 +64,12 @@ const manageContact = tool(
 
     CREAR (sin contact_id):
     - Retorna: { contact_id, node_id } 
-    - El node_id es NECESARIO para manageContextGraph
+    - El node_id y contact_id es NECESARIO para manageContextGraph
 
     LEER/ACTUALIZAR (con contact_id):
-    - Obtiene datos básicos incluyendo node_id
+    - Obtiene datos básicos incluyendo node_id y contact_id
     - Actualiza nombre, apellido, canales de comunicación`,
+
     schema: z.object({
       user_id: z.string().describe(
         "El UUID del usuario propietario (siempre requerido)",
@@ -73,9 +79,6 @@ const manageContact = tool(
       ),
       request: z.string().describe(
         "La solicitud: crear, consultar, o actualizar datos básicos",
-      ),
-      mode: z.string().describe(
-        "El modo de operación: CONVERSATIONAL, ACTIONABLE, CONTACT_DETAILS_UPDATE",
       ),
     }),
   },
