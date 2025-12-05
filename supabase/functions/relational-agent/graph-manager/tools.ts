@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { llm } from "../lib/llm_provider.ts";
 import { embeddings } from "../lib/llm_provider.ts";
-import { NodeType, SimilarNode } from "../types.ts";
+import { SimilarNode } from "../types.ts";
 import { EmbeddingCache } from "../lib/embedding_cache.ts";
 
 const SIMILARITY_THRESHOLD_EXACT = 0.90;
@@ -530,166 +530,46 @@ export const find_shared_connections_for_contact = tool(
   },
 );
 
-export const upsert_semantic_node = tool(
-  async (
-    { user_id, label, concept_category }: {
-      user_id: string;
-      label: string;
-      concept_category: string;
-    },
-  ) => {
+export const batch_delete_semantic_nodes = tool(
+  async ({
+    user_id,
+    node_ids,
+  }: {
+    user_id: string;
+    node_ids: string[];
+  }) => {
     try {
-      const { data: existingNode, error: searchError } = await supabase
-        .from("semantic_nodes")
-        .select("*")
-        .eq("user_id", user_id)
-        .eq("type", "CONCEPT")
-        .ilike("label", label)
-        .maybeSingle();
+      console.log(
+        `[batch_delete_semantic_nodes] Processing ${node_ids.length} nodes for user ${user_id}`,
+      );
 
-      if (searchError) {
-        console.error(
-          "[upsert_semantic_node] Search Error:",
-          searchError.message,
-        );
-        throw new Error(searchError.message);
-      }
-
-      if (existingNode) {
-        const { data: updatedNode, error: updateError } = await supabase
-          .from("semantic_nodes")
-          .update({ weight: existingNode.weight + 1 })
-          .eq("id", existingNode.id)
-          .select()
-          .single();
-
-        if (updateError) {
-          console.error(
-            "[upsert_semantic_node] Update Error:",
-            updateError.message,
-          );
-          throw new Error(updateError.message);
-        }
-
-        return JSON.stringify({
-          message: `Nodo reutilizado. Weight: ${updatedNode.weight}`,
-          node: updatedNode,
-          reused: true,
-        });
-      } else {
-        const { data: newNode, error: insertError } = await supabase
-          .from("semantic_nodes")
-          .insert({
-            user_id,
-            type: "CONCEPT" as NodeType,
-            label,
-            concept_category,
-            weight: 1,
-          })
-          .select()
-          .single();
-
-        if (insertError) {
-          console.error(
-            "[upsert_semantic_node] Insert Error:",
-            insertError.message,
-          );
-          throw new Error(insertError.message);
-        }
-
-        return JSON.stringify({
-          message: "Nodo creado exitosamente",
-          node: newNode,
-          reused: false,
-        });
-      }
-    } catch (error) {
-      console.error("[upsert_semantic_node] Exception:", error);
-      throw new Error((error as Error).message);
-    }
-  },
-  {
-    name: "upsert_semantic_node",
-    description:
-      "Crea un nuevo nodo CONCEPT o retorna el existente si ya existe.",
-    schema: z.object({
-      user_id: z.string().describe("El UUID del usuario propietario del grafo"),
-      label: z.string().describe('Etiqueta del nodo (ej: "pádel", "Google")'),
-      concept_category: z.string().describe(
-        'Categoría del concepto: "Hobby", "Empresa", "Interés", "Emoción", etc.',
-      ),
-    }),
-  },
-);
-
-export const delete_semantic_node = tool(
-  async (
-    {
-      node_id,
-      user_id,
-      skip_details_regeneration,
-      contact_id,
-    }: {
-      node_id: string;
-      user_id: string;
-      skip_details_regeneration: boolean;
-      contact_id: string;
-    },
-  ) => {
-    try {
-      const uuidRegex =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (!uuidRegex.test(node_id)) {
-        throw new Error(
-          `UUID inválido para node_id: "${node_id}". Debe ser un UUID completo de 36 caracteres.`,
-        );
-      }
-      if (!uuidRegex.test(user_id)) {
-        throw new Error(
-          `UUID inválido para user_id: "${user_id}". Debe ser un UUID completo de 36 caracteres.`,
-        );
-      }
-
-      const { error: deleteNodeError } = await supabase
+      const { error: deleteNodesError } = await supabase
         .from("semantic_nodes")
         .delete()
-        .eq("id", node_id)
-        .eq("user_id", user_id);
+        .eq("user_id", user_id)
+        .in("id", node_ids);
 
-      if (deleteNodeError) {
+      if (deleteNodesError) {
         console.error(
-          "[delete_semantic_node] Delete Node Error:",
-          deleteNodeError.message,
+          "[batch_delete_semantic_nodes] Delete Nodes Error:",
+          deleteNodesError.message,
         );
-        throw new Error(deleteNodeError.message);
-      }
-
-      if (!skip_details_regeneration) {
-        await regenerate_contact_details(
-          contact_id,
-          node_id,
-          "",
-          false,
-        );
+        throw new Error(deleteNodesError.message);
       }
     } catch (error) {
-      console.error("[delete_semantic_node] Exception:", error);
+      console.error("[batch_delete_semantic_nodes] Exception:", error);
       throw new Error((error as Error).message);
     }
   },
   {
-    name: "delete_semantic_node",
+    name: "batch_delete_semantic_nodes",
     description:
-      "Elimina un nodo. SOLO elimina nodos del node_id especificado, nunca afecta otros nodos.",
+      "Elimina varios nodos. SOLO elimina nodos del user_id especificado, nunca afecta otros nodos.",
     schema: z.object({
-      node_id: z.string().describe("El UUID del nodo a eliminar"),
       user_id: z.string().describe("El UUID del usuario propietario"),
-      contact_id: z.string().describe("El UUID del contacto propietario"),
-      skip_details_regeneration: z
-        .boolean()
-        .describe(
-          "Si true, no regenera details. Usar SIEMPRE que se esté en modo CONTACT_DETAILS_UPDATE.",
-        ),
+      node_ids: z.array(z.string()).describe(
+        "Los UUIDs de los nodos a eliminar",
+      ),
     }),
   },
 );
@@ -747,7 +627,7 @@ export const batch_add_info_to_graph = tool(
           const matches = await find_similar_nodes(
             user_id,
             item.embedding,
-            [node_id],
+            Array.from(currentContactNodeIds),
             {
               minSimilarity: SIMILARITY_THRESHOLD_RELATED,
               limit: 1,

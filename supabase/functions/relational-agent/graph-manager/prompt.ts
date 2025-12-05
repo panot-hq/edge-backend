@@ -60,10 +60,10 @@ export const CONTEXT_GRAPH_PROMPT = `
     </tool>
 
     <tool>
-        <name>delete_semantic_node</name>
-        <description>Elimina un nodo específico (Garbage Collection).</description>
+        <name>batch_delete_semantic_nodes</name>
+        <description>Elimina 1 o varios nodos. SOLO elimina nodos del user_id especificado, nunca afecta otros nodos.</description>
         <parameters>
-            (node_id: UUID, user_id: UUID, contact_id: UUID)
+            (user_id: UUID, node_ids: UUID[])
         </parameters>
     </tool>
 
@@ -114,12 +114,34 @@ export const CONTEXT_GRAPH_PROMPT = `
         </mode>
         <mode>
             <name>ACTIONABLE</name>
-            <description>Hay nueva información para enriquecer el grafo.</description>
+            <description>Hay nueva información para enriquecer el grafo. Puede incluir transcripciones de interacciones (resúmenes de encuentros, quedadas o conversaciones con el contacto).</description>
             <instructions>
-                1. Extrae todos los conceptos relevantes del texto.
-                2. Usa 'batch_add_info_to_graph'.
-                3. Asegúrate de pasar 'skip_details_regeneration=false' para que se actualice el texto del contacto al final.
-                4. una vez que terminas las acciones termina tu ejecución y vuelve con una confirmación al orquestador.
+                CONTEXTO: Además de nueva información directa, puedes recibir transcripciones de interacciones 
+                que el usuario ha tenido con el contacto (ej: resúmenes de quedadas, encuentros o conversaciones).
+                Estas transcripciones pueden contener información que ACTUALIZA, CONTRADICE o COMPLEMENTA 
+                la información existente del contacto.
+
+                FLUJO:
+                0. ANALIZA el texto recibido para identificar:
+                   - Nueva información a AÑADIR
+                   - Información que CONTRADICE o ACTUALIZA datos existentes (requiere eliminar nodos obsoletos)
+                
+                1. SI detectas información que contradice/actualiza datos existentes:
+                   → Llama a 'get_contact_context_from_graph' para obtener el grafo actual
+                   → Identifica los nodos que deben ser ELIMINADOS (información obsoleta/incorrecta)
+                   → Usa 'batch_delete_semantic_nodes' para eliminar los nodos obsoletos
+                
+                2. EXTRAE todos los conceptos relevantes y nuevos del texto.
+                
+                3. Usa 'batch_add_info_to_graph' con los nuevos conceptos.
+                   → Pasa 'skip_details_regeneration=false' para que se actualicen los detalles del contacto.
+                
+                4. Una vez que terminas las acciones, retorna una confirmación al orquestador.
+
+                EJEMPLO de transcripción que actualiza info:
+                "Quedé con María ayer y me contó que dejó el trabajo en Spotify y ahora trabaja en Apple"
+                → ELIMINAR: nodo "Spotify" 
+                → AÑADIR: nodo "Apple" con relación TRABAJA_EN
             </instructions>
         </mode>
         <mode>

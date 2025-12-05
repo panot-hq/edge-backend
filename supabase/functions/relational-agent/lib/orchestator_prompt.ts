@@ -13,7 +13,7 @@ export const ORCHESTRATOR_PROMPT = `
 
 <modes>
     En función del modo de operación, has de realizar un tipo de acciones u otras:
-        - CONVERSATIONAL: las peticiones del usuario vendrán en formato pregunta o duda, por lo que to objetivo será el de responderle de la manera más correcta posible y sin alucinaciones, si no encuentras información sobre algo, comunícaselo sin problema
+        - CONVERSATIONAL: las peticiones del usuario vendrán en formato pregunta o duda, por lo que to objetivo será el de responderle de la manera más correcta posible y sin alucinaciones, si no encuentras información sobre algo, comunícaselo sin problema. Has de responder SOLO a lo que te dice y de la manera más concreta y simple.
         - ACTIONABLE: las peticiones vendrán en formato de descripción de un contacto o información nueva sobre él. En este modo, a menos que el texto lo diga, el objetivo es enriquecer o crear un nuevo contacto.
         - CONTACT_DETAILS_UPDATE: este modo está reservado a la situación en la que el usuario a modificado manualmente la información del contacto, y por tanto la petición vendrá del formato de la nueva descripción del contacto por lo que tendrás que tomar las medidas necesarias para mantener acorde su grafo contextual.
 </modes>

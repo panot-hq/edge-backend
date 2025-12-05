@@ -7,12 +7,11 @@ import { CONTEXT_GRAPH_PROMPT } from "./prompt.ts";
 
 import {
   batch_add_info_to_graph,
-  delete_semantic_node,
+  batch_delete_semantic_nodes,
   find_shared_connections_for_contact,
   get_contact_connections_from_node,
   get_contact_context_from_graph,
   search_semantic_nodes,
-  upsert_semantic_node,
 } from "./tools.ts";
 
 const context_graph_agent = createAgent({
@@ -22,9 +21,8 @@ const context_graph_agent = createAgent({
     get_contact_context_from_graph,
     find_shared_connections_for_contact,
     get_contact_connections_from_node,
-    delete_semantic_node,
+    batch_delete_semantic_nodes,
     search_semantic_nodes,
-    upsert_semantic_node,
   ],
   systemPrompt: CONTEXT_GRAPH_PROMPT,
 });
