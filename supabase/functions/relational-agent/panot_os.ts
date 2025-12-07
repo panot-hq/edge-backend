@@ -1,5 +1,4 @@
 import { createAgent } from "langchain";
-import { ChatOpenAI } from "@langchain/openai";
 
 import { ORCHESTRATOR_PROMPT } from "./lib/orchestator_prompt.ts";
 
