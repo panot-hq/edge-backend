@@ -1,5 +1,5 @@
 import { call_worker } from "./call_worker.ts";
-import { get_user_worker } from "./lib/helpers.ts";
+import { change_worker_status, get_user_worker } from "./lib/helpers.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -17,13 +17,19 @@ const handleRequest = async (req: Request) => {
 
     const { user_id } = await req.json();
     const worker = await get_user_worker(user_id);
+    if (worker.status !== "idle") {
+      throw new Error("Worker is not idle");
+    } else {
+      await change_worker_status(user_id, "busy");
 
-    const result = await call_worker(worker);
+      const result = await call_worker(worker);
 
-    return new Response(JSON.stringify({ worker, result }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 200,
-    });
+      await change_worker_status(user_id, "idle");
+      return new Response(JSON.stringify({ worker, result }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      });
+    }
   } catch (error) {
     console.error("Error:", error);
     return new Response(JSON.stringify({ error: (error as Error).message }), {

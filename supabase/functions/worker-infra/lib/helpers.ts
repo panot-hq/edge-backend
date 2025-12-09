@@ -1,6 +1,17 @@
 import { supabase } from "./supabase.ts";
 import { Job, JOB_STATUS } from "../types.ts";
 
+const change_worker_status = async (user_id: string, status: string) => {
+  const { error } = await supabase
+    .from("workers")
+    .update({ status })
+    .eq("user_id", user_id);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+};
+
 const get_contact_node_id = async (contact_id: string) => {
   const { data: node_id, error } = await supabase
     .from("contacts")
@@ -166,6 +177,7 @@ const new_contact = async (job: Job) => {
 };
 
 export {
+  change_worker_status,
   claim_next_job,
   details_update,
   get_remaining_jobs,
