@@ -1,7 +1,10 @@
 import { Job, JOB_STATUS } from "./types.ts";
 import {
   claim_next_job,
+  details_update,
   get_remaining_jobs,
+  interaction_transcript,
+  new_contact,
   update_job_status,
 } from "./lib/helpers.ts";
 
@@ -21,11 +24,12 @@ export const call_worker = async (worker: Job) => {
       }
 
       if (job.job_type === "DETAILS_UPDATE") {
-        // perform details update
+        await details_update(job);
       } else if (job.job_type === "INTERACTION_TRANSCRIPT") {
-        // perform interaction transcript
-      } else { // NEW_CONTACT
-        // perform new contact
+        await interaction_transcript(job);
+      } else {
+        // NEW_CONTACT
+        await new_contact(job);
       }
 
       update_job_status(job.id, JOB_STATUS.COMPLETED);

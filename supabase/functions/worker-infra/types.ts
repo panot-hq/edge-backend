@@ -3,7 +3,11 @@ export type Job = {
   user_id: string;
   contact_id: string;
   job_type: JOB_TYPE;
-  payload: JSON;
+  payload: {
+    details: string | null;
+    transcript: string | null;
+    interaction_id: string | null;
+  };
   status: string;
   error_message: string;
   updated_at: Date;
