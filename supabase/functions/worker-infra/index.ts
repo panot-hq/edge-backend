@@ -17,8 +17,8 @@ const handleRequest = async (req: Request) => {
 
     const { user_id } = await req.json();
     const worker = await get_user_worker(user_id);
-    if (worker.status !== "idle") {
-      throw new Error("Worker is not idle");
+    if (worker.status !== "busy") {
+      throw new Error("Worker is not busy");
     } else {
       await change_worker_status(user_id, "busy");
 
